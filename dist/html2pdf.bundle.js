@@ -8576,13 +8576,11 @@ Worker.prototype.toPdf = function toPdf() {
     var canvas = this.prop.canvas;
     var opt = this.opt;
 
-    // Calculate the number of pages.
+    // Calculate the page height.
     var ctx = canvas.getContext('2d');
     var pxFullHeight = canvas.height;
     var pxPageHeight = Math.floor(canvas.width * this.prop.pageSize.inner.ratio);
-    var nPages = Math.ceil(pxFullHeight / pxPageHeight);
 
-    // Define pageHeight separately so it can be trimmed on the final page.
     var pageHeight = this.prop.pageSize.inner.height;
 
     // Create a one-page canvas to split up the full image.
@@ -8594,19 +8592,57 @@ Worker.prototype.toPdf = function toPdf() {
     // Initialize the PDF.
     this.prop.pdf = this.prop.pdf || new jspdf_min(opt.jsPDF);
 
-    for (var page = 0; page < nPages; page++) {
-      // Trim the final page to reduce file size.
-      if (page === nPages - 1) {
-        pageCanvas.height = pxFullHeight % pxPageHeight;
-        pageHeight = pageCanvas.height * this.prop.pageSize.inner.width / pageCanvas.width;
-      }
+    var yOffset = 0;
 
-      // Display the page.
+    for (var page = 0; yOffset < pxFullHeight; page++) {
       var w = pageCanvas.width;
       var h = pageCanvas.height;
+
+      var manualBreak = false;
+
+      if (opt.pageBreakColor) {
+        // Search for manual page breaks
+
+        // Get first pixel of every line
+        var leftPixs = ctx.getImageData(0, yOffset, 1, h).data;
+
+        for (var i = 0; i < h; i++) {
+          var leftPix = leftPixs.slice(i * 4, i * 4 + 4);
+          if (leftPix[0] === opt.pageBreakColor.r && leftPix[1] === opt.pageBreakColor.g && leftPix[2] === opt.pageBreakColor.b) {
+            h = i;
+            manualBreak = true;
+            break;
+          }
+        }
+      }
+
+      if (!manualBreak) {
+        // Search for a blank line to insert a page break there
+        if (yOffset + h < pxFullHeight) {
+          // But not on the last page.
+          for (; h > 1 && !ctx.getImageData(0, yOffset + h, w, 1).data.every(function (el) {
+            return el === 255;
+          }); h--) {}
+        } else {
+          h = pxFullHeight - yOffset;
+        }
+
+        // If no suitable breakpoint was found, give up and revert to maximum height
+        if (h === 1) {
+          h = pageCanvas.height;
+        }
+      }
+
       pageCtx.fillStyle = 'white';
-      pageCtx.fillRect(0, 0, w, h);
-      pageCtx.drawImage(canvas, 0, page * pxPageHeight, w, h, 0, 0, w, h);
+      pageCtx.fillRect(0, 0, w, pageCanvas.height);
+      pageCtx.drawImage(canvas, 0, yOffset, w, h, 0, 0, w, h);
+
+      yOffset += h;
+
+      // Omit page break line.
+      if (manualBreak) {
+        yOffset++;
+      }
 
       // Add the page to the PDF.
       if (page) this.prop.pdf.addPage();
