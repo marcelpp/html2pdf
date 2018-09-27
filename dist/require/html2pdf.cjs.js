@@ -321,28 +321,44 @@ Worker.prototype.toPdf = function toPdf() {
       if (opt.pageBreakColor) {
         // Search for manual page breaks
 
-        // Get first pixel of every line
-        var leftPixs = ctx.getImageData(0, yOffset, 1, h).data;
+        // Get vertical line of pixels from the middle
+        var middlePixs = ctx.getImageData(w / 2, yOffset, 1, h).data;
+
+        var previousLineInPageBreak = false;
+        var newH = 0;
+        var pageBreakHeight = 0;
+        var lastWhiteI = 0;
 
         for (var i = 0; i < h; i++) {
-          var leftPix = leftPixs.slice(i * 4, i * 4 + 4);
-          if (leftPix[0] === opt.pageBreakColor.r && leftPix[1] === opt.pageBreakColor.g && leftPix[2] === opt.pageBreakColor.b) {
-            h = i;
-            manualBreak = true;
-            break;
+          var middlePix = middlePixs.slice(i * 4, i * 4 + 4);
+
+          if (middlePix[0] === 255 && middlePix[1] === 255 && middlePix[2] === 255) {
+            if (previousLineInPageBreak) {
+              newH = lastWhiteI;
+              pageBreakHeight = i - lastWhiteI;
+              manualBreak = true;
+              break;
+            } else {
+              lastWhiteI = i;
+            }
+          } else if (middlePix[0] === opt.pageBreakColor.r && middlePix[1] === opt.pageBreakColor.g && middlePix[2] === opt.pageBreakColor.b) {
+            previousLineInPageBreak = true;
           }
+        }
+
+        if (newH != 0) {
+          h = newH;
         }
       }
 
       if (!manualBreak) {
         // Search for a blank line to insert a page break there
+        // (except for the last page)
         if (yOffset + h < pxFullHeight) {
-          // But not on the last page.
+          // Move up until white line is found
           for (; h > 1 && !ctx.getImageData(0, yOffset + h, w, 1).data.every(function (el) {
             return el === 255;
           }); h--) {}
-        } else {
-          h = pxFullHeight - yOffset;
         }
 
         // If no suitable breakpoint was found, give up and revert to maximum height
@@ -356,10 +372,8 @@ Worker.prototype.toPdf = function toPdf() {
       pageCtx.drawImage(canvas, 0, yOffset, w, h, 0, 0, w, h);
 
       yOffset += h;
-
-      // Omit page break line.
       if (manualBreak) {
-        yOffset++;
+        yOffset += pageBreakHeight;
       }
 
       // Add the page to the PDF.
